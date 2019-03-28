@@ -208,21 +208,24 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
   storage::DataTable read_table(&block_store_, layout_, storage::layout_version_t(0));
   // Populate read_table_ by inserting tuples
   // We can use dummy timestamps here since we're not invoking concurrency control
-  transaction::TransactionContext txn(transaction::timestamp_t(0), transaction::timestamp_t(0), &buffer_pool_,
+  transaction::TransactionContext olap_txn(transaction::timestamp_t(0), transaction::timestamp_t(0), &buffer_pool_,
+                                      LOGGING_DISABLED);
+  transaction::TransactionContext txn(transaction::timestamp_t(1), transaction::timestamp_t(1), &buffer_pool_,
                                       LOGGING_DISABLED);
   std::vector<storage::TupleSlot> read_order;
   std::vector<storage::TupleSlot> hotspot;
-  const uint32_t num_inserts = 1000000;
-  const uint32_t num_updates_per_iteration = 2;
-  const uint64_t num_iterations = 2;
-  const uint64_t num_hotspot = 100;
+  const uint32_t num_inserts = 100000;
+  const uint32_t num_updates_per_iteration = 1000;
+  const uint64_t num_iterations = 5;
+  const uint64_t num_hotspot = 1000;
 
   uint64_t average_version_length = 0;
   for (uint32_t i = 0; i < num_inserts; ++i) {
+    auto slot = read_table.Insert(&olap_txn, *redo_);
     if (i < num_hotspot) {
-      hotspot.emplace_back(read_table.Insert(&txn, *redo_));
+      hotspot.emplace_back(slot);
     }
-    read_order.emplace_back(read_table.Insert(&txn, *redo_));
+    read_order.emplace_back(slot);
   }
 
   for (auto _ : state) {
@@ -232,15 +235,14 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
 
         // Scan the entire table
         for (uint32_t i = 0; i < num_inserts; ++i) {
-          read_table.Select(&txn, read_order[i], read_, &version_chain_length_traversed);
+          read_table.Select(&olap_txn, read_order[i], read_, &version_chain_length_traversed);
           if ( i < num_hotspot) {
             average_version_length += version_chain_length_traversed;
-            printf("Nested loop join executor -- %u children\n", version_chain_length_traversed);
           }
         }
         average_version_length /= num_hotspot;
       }
-      printf("Nested loop join executor -- %llu children", average_version_length);
+      printf("Average version chain length this scan: %llu Time(in ms): %llu\n", average_version_length, elapsed_ms);
       state.SetIterationTime(static_cast<double>(elapsed_ms) / 1000.0);
       // Update the hotspot
       for (uint32_t i = 0; i < num_updates_per_iteration; ++i) {
