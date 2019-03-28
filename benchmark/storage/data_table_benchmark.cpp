@@ -37,6 +37,7 @@ class DataTableBenchmark : public benchmark::Fixture {
       read_buffers_.emplace_back(read_buffer);
       reads_.emplace_back(read);
     }
+    version_chain_length_traversed = 0;
   }
 
   void TearDown(const benchmark::State &state) final {
@@ -65,6 +66,9 @@ class DataTableBenchmark : public benchmark::Fixture {
   std::default_random_engine generator_;
   storage::BlockStore block_store_{1000, 1000};
   storage::RecordBufferSegmentPool buffer_pool_{num_inserts_, buffer_pool_reuse_limit_};
+
+  // Version Chain Length
+  uint32_t version_chain_length_traversed;
 
   // Insert buffer pointers
   byte *redo_buffer_;
@@ -198,13 +202,66 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, ConcurrentRandomRead)(benchmark::State &s
   state.SetItemsProcessed(state.iterations() * num_reads_);
 }
 
-BENCHMARK_REGISTER_F(DataTableBenchmark, SimpleInsert)->Unit(benchmark::kMillisecond);
+// Read the num_reads_ of tuples in a sequential order from a DataTable in a single thread
+// NOLINTNEXTLINE
+BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &state) {
+  storage::DataTable read_table(&block_store_, layout_, storage::layout_version_t(0));
+  // Populate read_table_ by inserting tuples
+  // We can use dummy timestamps here since we're not invoking concurrency control
+  transaction::TransactionContext txn(transaction::timestamp_t(0), transaction::timestamp_t(0), &buffer_pool_,
+                                      LOGGING_DISABLED);
+  std::vector<storage::TupleSlot> read_order;
+  std::vector<storage::TupleSlot> hotspot;
+  const uint32_t num_inserts = 1000000;
+  const uint32_t num_updates_per_iteration = 2;
+  const uint64_t num_iterations = 2;
+  const uint64_t num_hotspot = 100;
 
-BENCHMARK_REGISTER_F(DataTableBenchmark, ConcurrentInsert)->Unit(benchmark::kMillisecond)->UseRealTime();
+  uint64_t average_version_length = 0;
+  for (uint32_t i = 0; i < num_inserts; ++i) {
+    if (i < num_hotspot) {
+      hotspot.emplace_back(read_table.Insert(&txn, *redo_));
+    }
+    read_order.emplace_back(read_table.Insert(&txn, *redo_));
+  }
 
-BENCHMARK_REGISTER_F(DataTableBenchmark, SequentialRead)->Unit(benchmark::kMillisecond);
+  for (auto _ : state) {
+    for (uint32_t i = 0; i < num_iterations; ++i) {
+      uint64_t elapsed_ms = 0;
+      {
 
-BENCHMARK_REGISTER_F(DataTableBenchmark, RandomRead)->Unit(benchmark::kMillisecond);
+        // Scan the entire table
+        for (uint32_t i = 0; i < num_inserts; ++i) {
+          read_table.Select(&txn, read_order[i], read_, &version_chain_length_traversed);
+          if ( i < num_hotspot) {
+            average_version_length += version_chain_length_traversed;
+            printf("Nested loop join executor -- %u children\n", version_chain_length_traversed);
+          }
+        }
+        average_version_length /= num_hotspot;
+      }
+      printf("Nested loop join executor -- %llu children", average_version_length);
+      state.SetIterationTime(static_cast<double>(elapsed_ms) / 1000.0);
+      // Update the hotspot
+      for (uint32_t i = 0; i < num_updates_per_iteration; ++i) {
+        for (uint32_t i = 0; i < num_hotspot; ++i) {
+          read_table.Update(&txn, hotspot[i], *redo_);
+        }
+      }
+    }
+  }
+  state.SetItemsProcessed(state.iterations() * num_reads_);
+}
 
-BENCHMARK_REGISTER_F(DataTableBenchmark, ConcurrentRandomRead)->Unit(benchmark::kMillisecond)->UseRealTime();
+//BENCHMARK_REGISTER_F(DataTableBenchmark, SimpleInsert)->Unit(benchmark::kMillisecond);
+//
+//BENCHMARK_REGISTER_F(DataTableBenchmark, ConcurrentInsert)->Unit(benchmark::kMillisecond)->UseRealTime();
+//
+//BENCHMARK_REGISTER_F(DataTableBenchmark, SequentialRead)->Unit(benchmark::kMillisecond);
+//
+//BENCHMARK_REGISTER_F(DataTableBenchmark, RandomRead)->Unit(benchmark::kMillisecond);
+//
+//BENCHMARK_REGISTER_F(DataTableBenchmark, ConcurrentRandomRead)->Unit(benchmark::kMillisecond)->UseRealTime();
+
+BENCHMARK_REGISTER_F(DataTableBenchmark, LongUpdatesandRead)->Unit(benchmark::kMillisecond);
 }  // namespace terrier

@@ -130,6 +130,8 @@ class DataTable {
    * @return true if tuple is visible to this txn and ProjectedRow has been populated, false otherwise
    */
   bool Select(transaction::TransactionContext *txn, TupleSlot slot, ProjectedRow *out_buffer) const;
+  bool Select(transaction::TransactionContext *txn, TupleSlot slot, ProjectedRow *out_buffer,
+      uint32_t *version_chain_traversed) const;
 
   // TODO(Tianyu): Should this be updated in place or return a new iterator? Does the caller ever want to
   // save a point of scan and come back to it later?
@@ -236,6 +238,9 @@ class DataTable {
   // the method is explicitly instantiated for ProjectedRow and ProjectedColumns::RowView
   template <class RowType>
   bool SelectIntoBuffer(transaction::TransactionContext *txn, TupleSlot slot, RowType *out_buffer) const;
+  template <class RowType>
+  bool SelectIntoBuffer(transaction::TransactionContext *txn, TupleSlot slot, RowType *out_buffer,
+      uint32_t *version_chain_traversed) const;
 
   // Atomically read out the version pointer value.
   UndoRecord *AtomicallyReadVersionPtr(TupleSlot slot, const TupleAccessStrategy &accessor) const;

@@ -28,6 +28,11 @@ bool DataTable::Select(terrier::transaction::TransactionContext *txn, terrier::s
   data_table_counter_.IncrementNumSelect(1);
   return SelectIntoBuffer(txn, slot, out_buffer);
 }
+bool DataTable::Select(terrier::transaction::TransactionContext *txn, terrier::storage::TupleSlot slot,
+                       terrier::storage::ProjectedRow *out_buffer, uint32_t *version_chain_traversed) const {
+  data_table_counter_.IncrementNumSelect(1);
+  return SelectIntoBuffer(txn, slot, out_buffer, version_chain_traversed);
+}
 
 void DataTable::Scan(transaction::TransactionContext *const txn, SlotIterator *const start_pos,
                      ProjectedColumns *const out_buffer) const {
@@ -221,7 +226,6 @@ bool DataTable::SelectIntoBuffer(transaction::TransactionContext *const txn, con
   if (version_ptr == nullptr || version_ptr->Timestamp().load() == txn->TxnId().load()) {
     return visible;
   }
-
   // Apply deltas until we reconstruct a version safe for us to read
   // If the version chain becomes null, this tuple does not exist for this version, and the last delta
   // record would be an undo for insert that sets the primary key to null, which is intended behavior.
@@ -244,7 +248,66 @@ bool DataTable::SelectIntoBuffer(transaction::TransactionContext *const txn, con
     // the chain than an insert.
     version_ptr = version_ptr->Next();
   }
+  return visible;
+}
 
+template <class RowType>
+bool DataTable::SelectIntoBuffer(transaction::TransactionContext *const txn, const TupleSlot slot,
+                                 RowType *const out_buffer, uint32_t *version_chain_traversed) const {
+  TERRIER_ASSERT(out_buffer->NumColumns() <= accessor_.GetBlockLayout().NumColumns() - NUM_RESERVED_COLUMNS,
+                 "The output buffer never returns the version pointer columns, so it should have "
+                 "fewer attributes.");
+  TERRIER_ASSERT(out_buffer->NumColumns() > 0, "The output buffer should return at least one attribute.");
+
+  UndoRecord *version_ptr;
+  bool visible;
+  do {
+    version_ptr = AtomicallyReadVersionPtr(slot, accessor_);
+    // Copy the current (most recent) tuple into the output buffer. These operations don't need to be atomic,
+    // because so long as we set the version ptr before updating in place, the reader will know if a conflict
+    // can potentially happen, and chase the version chain before returning anyway,
+    for (uint16_t i = 0; i < out_buffer->NumColumns(); i++) {
+      TERRIER_ASSERT(out_buffer->ColumnIds()[i] != VERSION_POINTER_COLUMN_ID,
+                     "Output buffer should not read the version pointer column.");
+      StorageUtil::CopyAttrIntoProjection(accessor_, slot, out_buffer, i);
+    }
+    // Here we will need to check that the version pointer did not change during our read. If it did, the content
+    // we have read might have been rolled back and an abort has already unlinked the associated undo-record,
+    // we will have to loop around to avoid a dirty read.
+    // TODO(Matt): might not need to read visible in the loop (move after?) but not confident without large random tests
+    visible = Visible(slot, accessor_);
+  } while (version_ptr != AtomicallyReadVersionPtr(slot, accessor_));
+
+  // Nullptr in version chain means no version visible to any transaction alive at this point.
+  // Alternatively, if the current transaction holds the write lock, it should be able to read its own updates.
+  if (version_ptr == nullptr || version_ptr->Timestamp().load() == txn->TxnId().load()) {
+    return visible;
+  }
+  uint32_t ct = 0;
+  // Apply deltas until we reconstruct a version safe for us to read
+  // If the version chain becomes null, this tuple does not exist for this version, and the last delta
+  // record would be an undo for insert that sets the primary key to null, which is intended behavior.
+  while (version_ptr != nullptr &&
+         transaction::TransactionUtil::NewerThan(version_ptr->Timestamp().load(), txn->StartTime())) {
+    // TODO(Matt): It's possible that if we make some guarantees about where in the version chain INSERTs (last position
+    // in version chain) and DELETEs (first position in version chain) can appear that we can optimize this check
+    switch (version_ptr->Type()) {
+      case DeltaRecordType::UPDATE:
+        // Normal delta to be applied. Does not modify the logical delete column.
+        StorageUtil::ApplyDelta(accessor_.GetBlockLayout(), *(version_ptr->Delta()), out_buffer);
+        break;
+      case DeltaRecordType::INSERT:
+        visible = false;
+        break;
+      case DeltaRecordType::DELETE:
+        visible = true;
+    }
+    // TODO(Matt): This logic might need revisiting if we start recycling slots and a chain can have a delete later in
+    // the chain than an insert.
+    version_ptr = version_ptr->Next();
+    ct++;
+  }
+  *version_chain_traversed = ct;
   return visible;
 }
 
