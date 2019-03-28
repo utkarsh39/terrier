@@ -9,6 +9,7 @@
 #include "transaction/transaction_manager.h"
 #include "util/multithread_test_util.h"
 #include "util/storage_test_util.h"
+#include "common/scoped_timer.h"
 
 namespace terrier {
 
@@ -230,9 +231,9 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
 
   for (auto _ : state) {
     for (uint32_t i = 0; i < num_iterations; ++i) {
-      uint64_t elapsed_ms = 0;
+      uint64_t elapsed_ms;
       {
-
+        common::ScopedTimer timer(&elapsed_ms);
         // Scan the entire table
         for (uint32_t i = 0; i < num_inserts; ++i) {
           read_table.Select(&olap_txn, read_order[i], read_, &version_chain_length_traversed);
