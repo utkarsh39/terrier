@@ -99,6 +99,13 @@ class ObjectPool {
     if (reuse_queue_.empty() && current_size_ >= size_limit_) throw NoMoreObjectException(size_limit_);
     T *result = nullptr;
     if (reuse_queue_.empty()) {
+//      exit(1);
+      allocated_memory += sizeof(T);
+      uint64_t tmp = allocated_memory/threshold;
+      if (tmp != last_print) {
+        last_print = tmp;
+        printf("Memory allocated(in 10 MBs): %llu\n", allocated_memory/threshold);
+      }
       result = alloc_.New();  // result could be null because the allocator may not find enough memory space
       if (result != nullptr) current_size_++;
     } else {
@@ -188,5 +195,8 @@ class ObjectPool {
   // current_size_ represents the number of objects the object pool has allocated,
   // including objects that have been given out to callers and those reside in reuse_queue
   uint64_t current_size_;
+  uint64_t allocated_memory;
+  uint64_t last_print;
+  uint64_t threshold = 1024*1024*10;
 };
 }  // namespace terrier::common

@@ -235,9 +235,9 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
       {
         common::ScopedTimer timer(&elapsed_ms);
         // Scan the entire table
-        for (uint32_t i = 0; i < num_inserts; ++i) {
-          read_table.Select(&olap_txn, read_order[i], read_, &version_chain_length_traversed);
-          if ( i < num_hotspot) {
+        for (uint32_t j = 0; j < num_inserts; ++j) {
+          read_table.Select(&olap_txn, read_order[j], read_, &version_chain_length_traversed);
+          if ( j < num_hotspot) {
             average_version_length += version_chain_length_traversed;
           }
         }
@@ -246,9 +246,9 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
       printf("Average version chain length this scan: %llu Time(in ms): %llu\n", average_version_length, elapsed_ms);
       state.SetIterationTime(static_cast<double>(elapsed_ms) / 1000.0);
       // Update the hotspot
-      for (uint32_t i = 0; i < num_updates_per_iteration; ++i) {
-        for (uint32_t i = 0; i < num_hotspot; ++i) {
-          read_table.Update(&txn, hotspot[i], *redo_);
+      for (uint32_t j = 0; j < num_updates_per_iteration; ++j) {
+        for (uint32_t k = 0; k < num_hotspot; ++k) {
+          read_table.Update(&txn, hotspot[k], *redo_);
         }
       }
     }
