@@ -52,6 +52,11 @@ class TransactionManager {
   void Abort(TransactionContext *txn);
 
   /**
+   * @return unordered_set of all active txns
+   */
+  std::vector<timestamp_t> GetActiveTxns();
+
+  /**
    * Get the oldest transaction alive in the system at this time. Because of concurrent operations, it
    * is not guaranteed that upon return the txn is still alive. However, it is guaranteed that the return
    * timestamp is older than any transactions live.
@@ -76,6 +81,7 @@ class TransactionManager {
   TransactionQueue CompletedTransactionsForGC();
 
  private:
+  friend class storage::GarbageCollector;
   storage::RecordBufferSegmentPool *buffer_pool_;
   // TODO(Tianyu): Timestamp generation needs to be more efficient (batches)
   // TODO(Tianyu): We don't handle timestamp wrap-arounds. I doubt this would be an issue though.

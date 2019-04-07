@@ -81,7 +81,7 @@ struct GarbageCollectorTests : public ::terrier::TerrierTest {
   storage::BlockStore block_store_{100, 100};
   storage::RecordBufferSegmentPool buffer_pool_{10000, 10000};
   std::default_random_engine generator_;
-  const uint32_t num_iterations_ = 100;
+  const uint32_t num_iterations_ = 1;
   const uint16_t max_columns_ = 100;
 };
 
@@ -107,9 +107,9 @@ TEST_F(GarbageCollectorTests, SingleInsert) {
 
     txn_manager.Commit(txn0, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink the Insert's UndoRecord, then deallocate it on the next run
-    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Not unlinking the head of version chain
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
   }
 }
 
@@ -127,47 +127,6 @@ TEST_F(GarbageCollectorTests, ReadOnly) {
     // Unlink the txn and deallocate immediately because it's read-only
     EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
     EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
-  }
-}
-
-// Insert a tuple and commit. Next transaction tries to update that tuple (takes write lock), verify that GC doesn't
-// unlink or free the Insert txn's context until safe to do so
-// NOLINTNEXTLINE
-TEST_F(GarbageCollectorTests, WriteWriteConflictRequeue) {
-  for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
-    transaction::TransactionManager txn_manager{&buffer_pool_, true, LOGGING_DISABLED};
-    GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
-    storage::GarbageCollector gc(&txn_manager);
-
-    auto *insert_tuple = tested.GenerateRandomTuple(&generator_);
-
-    // insert the tuple to be Updated later
-    auto *txn = txn_manager.BeginTransaction();
-    storage::TupleSlot slot = tested.table_.Insert(txn, *insert_tuple);
-    txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
-
-    storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
-
-    auto *txn0 = txn_manager.BeginTransaction();
-
-    EXPECT_TRUE(tested.table_.Update(txn0, slot, *update));
-
-    auto *update_tuple = tested.GenerateVersionFromUpdate(*update, *insert_tuple);
-
-    storage::ProjectedRow *select_tuple = tested.SelectIntoBuffer(txn0, slot);
-    EXPECT_TRUE(tested.select_result_);
-    EXPECT_TRUE(StorageTestUtil::ProjectionListEqual(tested.Layout(), select_tuple, update_tuple));
-
-    // Verify that Insert txn doesn't get fully unlinked or reclaimed until txn0 finishes
-    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
-
-    txn_manager.Abort(txn0);
-
-    // Aborted transactions can be removed from the unlink queue immediately
-    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
-    // Safe to deallocate both transactions
-    EXPECT_EQ(std::make_pair(2u, 0u), gc.PerformGarbageCollection());
   }
 }
 
@@ -206,9 +165,9 @@ TEST_F(GarbageCollectorTests, CommitInsert1) {
 
     txn_manager.Commit(txn1, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink the two transactions and then deallocate the single non-read-only transaction
-    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Unlink and deallocate the single non-read-only transaction
+    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     auto *txn2 = txn_manager.BeginTransaction();
 
@@ -258,9 +217,9 @@ TEST_F(GarbageCollectorTests, CommitInsert2) {
 
     txn_manager.Commit(txn0, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink the two transactions and then deallocate the single non-read-only transaction
-    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Unlink and deallocate the single non-read-only transaction
+    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     auto *txn2 = txn_manager.BeginTransaction();
 
@@ -401,9 +360,9 @@ TEST_F(GarbageCollectorTests, CommitUpdate1) {
     storage::TupleSlot slot = tested.table_.Insert(txn, *insert_tuple);
     txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink and reclaim the Insert
-    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Can't unlink the version chain head
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
 
@@ -471,9 +430,9 @@ TEST_F(GarbageCollectorTests, CommitUpdate2) {
     storage::TupleSlot slot = tested.table_.Insert(txn, *insert_tuple);
     txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink and reclaim the Insert
-    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Can't unlink the head
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
 
@@ -541,9 +500,9 @@ TEST_F(GarbageCollectorTests, AbortUpdate1) {
     storage::TupleSlot slot = tested.table_.Insert(txn, *insert_tuple);
     txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink and reclaim the Insert
-    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Can't unlink the head
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
 
@@ -613,9 +572,9 @@ TEST_F(GarbageCollectorTests, AbortUpdate2) {
     storage::TupleSlot slot = tested.table_.Insert(txn, *insert_tuple);
     txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
 
-    // Unlink and reclaim the Insert
-    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+    // Can't unlink the head
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
 
     storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
 
@@ -705,10 +664,249 @@ TEST_F(GarbageCollectorTests, InsertUpdate1) {
 
     txn_manager.Abort(txn0);
 
-    // Process the insert and aborted txns. Both should make it to the unlink phase
-    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
-    EXPECT_EQ(std::make_pair(2u, 0u), gc.PerformGarbageCollection());
+    // Process the aborted txn
+    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
   }
 }
 
+// NOLINTNEXTLINE
+TEST_F(GarbageCollectorTests, SingleOLAP) {
+  for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
+    transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
+    GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
+    storage::GarbageCollector gc(&txn_manager);
+
+    auto *txn0 = txn_manager.BeginTransaction();
+
+    auto *txn1 = txn_manager.BeginTransaction();
+
+    auto *insert_tuple = tested.GenerateRandomTuple(&generator_);
+    storage::TupleSlot slot = tested.table_.Insert(txn1, *insert_tuple);
+    txn_manager.Commit(txn1, TestCallbacks::EmptyCallback, nullptr);
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    auto *txn2 = txn_manager.BeginTransaction();
+
+    storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn2, slot, *update);
+    txn_manager.Commit(txn2, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *txn3 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn3, slot, *update);
+    txn_manager.Commit(txn3, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *txn4 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn4, slot, *update);
+    txn_manager.Commit(txn4, TestCallbacks::EmptyCallback, nullptr);
+
+    // Txn 2, 3 will be unlinked. Can't unlink 4 as it installed version chain head and 0 is still active
+    // Can't unlink txn 1 as it is an Insert Undo Record
+    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    txn_manager.Commit(txn0, TestCallbacks::EmptyCallback, nullptr);
+    // Unlink read-only txn 0 and unlink txn 1 as no active txn
+    // Deallocate txn 2, 3
+    EXPECT_EQ(std::make_pair(2u, 2u), gc.PerformGarbageCollection());
+    // Deallocate txn 1
+    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+  }
+}
+
+// NOLINTNEXTLINE
+TEST_F(GarbageCollectorTests, InterleavedOLAP) {
+  for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
+    transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
+    GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
+    storage::GarbageCollector gc(&txn_manager);
+
+    auto *txn0 = txn_manager.BeginTransaction();
+
+    auto *txn1 = txn_manager.BeginTransaction();
+
+    auto *insert_tuple = tested.GenerateRandomTuple(&generator_);
+    storage::TupleSlot slot = tested.table_.Insert(txn1, *insert_tuple);
+    txn_manager.Commit(txn1, TestCallbacks::EmptyCallback, nullptr);
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    auto *txn2 = txn_manager.BeginTransaction();
+
+    storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn2, slot, *update);
+    txn_manager.Commit(txn2, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *update_tuple = tested.GenerateVersionFromUpdate(*update, *insert_tuple);
+
+    auto *txn3 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn3, slot, *update);
+    txn_manager.Commit(txn3, TestCallbacks::EmptyCallback, nullptr);
+
+    update_tuple = tested.GenerateVersionFromUpdate(*update, *update_tuple);
+
+    auto *txn4 = txn_manager.BeginTransaction();
+
+    auto *txn5 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn5, slot, *update);
+    txn_manager.Commit(txn5, TestCallbacks::EmptyCallback, nullptr);
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    storage::ProjectedRow *select_tuple = tested.SelectIntoBuffer(txn4, slot);
+    EXPECT_TRUE(tested.select_result_);
+    EXPECT_TRUE(StorageTestUtil::ProjectionListEqual(tested.Layout(), select_tuple, update_tuple));
+
+    auto *txn6 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn6, slot, *update);
+    txn_manager.Commit(txn6, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *txn7 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn7, slot, *update);
+    txn_manager.Commit(txn7, TestCallbacks::EmptyCallback, nullptr);
+    // Txn 2, 3, 5, 6 will be unlinked. Can't unlink 7 as it installed version chain head and 0, 4 are still active
+    // Can't unlink txn 1 as it inserted tuple
+    EXPECT_EQ(std::make_pair(0u, 4u), gc.PerformGarbageCollection());
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    select_tuple = tested.SelectIntoBuffer(txn4, slot);
+    EXPECT_TRUE(tested.select_result_);
+    EXPECT_TRUE(StorageTestUtil::ProjectionListEqual(tested.Layout(), select_tuple, update_tuple));
+
+    txn_manager.Commit(txn4, TestCallbacks::EmptyCallback, nullptr);
+    // Unlink txn 4
+    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    txn_manager.Commit(txn0, TestCallbacks::EmptyCallback, nullptr);
+    // Unlink read-only txn 0 and txn 1
+    // Deallocate txn 2, 3, 5, 6
+    EXPECT_EQ(std::make_pair(4u, 2u), gc.PerformGarbageCollection());
+    // Deallocate txn 1
+    EXPECT_EQ(std::make_pair(1u, 0u), gc.PerformGarbageCollection());
+  }
+}
+
+// NOLINTNEXTLINE
+TEST_F(GarbageCollectorTests, TwoTupleOLAP) {
+  for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
+    transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
+    GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
+    storage::GarbageCollector gc(&txn_manager);
+
+    auto *txn0 = txn_manager.BeginTransaction();
+
+    auto *txn1 = txn_manager.BeginTransaction();
+
+    auto *insert_tuple = tested.GenerateRandomTuple(&generator_);
+    storage::TupleSlot slot = tested.table_.Insert(txn1, *insert_tuple);
+    txn_manager.Commit(txn1, TestCallbacks::EmptyCallback, nullptr);
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    auto *txn2 = txn_manager.BeginTransaction();
+
+    storage::ProjectedRow *update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn2, slot, *update);
+    txn_manager.Commit(txn2, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *update_tuple = tested.GenerateVersionFromUpdate(*update, *insert_tuple);
+
+    auto *txn3 = txn_manager.BeginTransaction();
+
+    update = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn3, slot, *update);
+    txn_manager.Commit(txn3, TestCallbacks::EmptyCallback, nullptr);
+
+    update_tuple = tested.GenerateVersionFromUpdate(*update, *update_tuple);
+
+    auto *txn4 = txn_manager.BeginTransaction();
+
+    auto *txn5 = txn_manager.BeginTransaction();
+
+    insert_tuple = tested.GenerateRandomTuple(&generator_);
+    storage::TupleSlot slot2 = tested.table_.Insert(txn5, *insert_tuple);
+    txn_manager.Commit(txn5, TestCallbacks::EmptyCallback, nullptr);
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    storage::ProjectedRow *select_tuple = tested.SelectIntoBuffer(txn4, slot);
+    EXPECT_TRUE(tested.select_result_);
+    EXPECT_TRUE(StorageTestUtil::ProjectionListEqual(tested.Layout(), select_tuple, update_tuple));
+
+    tested.SelectIntoBuffer(txn0, slot2);
+    EXPECT_FALSE(tested.select_result_);
+
+    tested.SelectIntoBuffer(txn4, slot2);
+    EXPECT_FALSE(tested.select_result_);
+
+    auto *txn6 = txn_manager.BeginTransaction();
+
+    storage::ProjectedRow *update2 = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn6, slot2, *update2);
+    txn_manager.Commit(txn6, TestCallbacks::EmptyCallback, nullptr);
+
+    auto *txn7 = txn_manager.BeginTransaction();
+
+    update2 = tested.GenerateRandomUpdate(&generator_);
+    tested.table_.Update(txn7, slot2, *update2);
+    txn_manager.Commit(txn7, TestCallbacks::EmptyCallback, nullptr);
+    // Txn 2, 6 will be unlinked.
+    // Can't unlink txn 1, 5 as they inserted tuple
+    EXPECT_EQ(std::make_pair(0u, 2u), gc.PerformGarbageCollection());
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    select_tuple = tested.SelectIntoBuffer(txn4, slot);
+    EXPECT_TRUE(tested.select_result_);
+    EXPECT_TRUE(StorageTestUtil::ProjectionListEqual(tested.Layout(), select_tuple, update_tuple));
+
+    tested.SelectIntoBuffer(txn0, slot2);
+    EXPECT_FALSE(tested.select_result_);
+
+    tested.SelectIntoBuffer(txn4, slot2);
+    EXPECT_FALSE(tested.select_result_);
+
+    txn_manager.Commit(txn4, TestCallbacks::EmptyCallback, nullptr);
+    // Unlink txn 4
+    EXPECT_EQ(std::make_pair(0u, 1u), gc.PerformGarbageCollection());
+
+    tested.SelectIntoBuffer(txn0, slot);
+    EXPECT_FALSE(tested.select_result_);
+
+    tested.SelectIntoBuffer(txn0, slot2);
+    EXPECT_FALSE(tested.select_result_);
+
+    txn_manager.Commit(txn0, TestCallbacks::EmptyCallback, nullptr);
+    // Unlink read-only txn 0 and txn 1, 5 as txn 0 committed
+    // Deallocate txn 2, 6
+    EXPECT_EQ(std::make_pair(2u, 3u), gc.PerformGarbageCollection());
+    // Deallocate txn 1, 5
+    EXPECT_EQ(std::make_pair(2u, 0u), gc.PerformGarbageCollection());
+  }
+}
 }  // namespace terrier
