@@ -4,11 +4,13 @@
 #include "benchmark/benchmark.h"
 #include "common/strong_typedef.h"
 #include "storage/data_table.h"
+#include "storage/garbage_collector.h"
 #include "storage/storage_util.h"
 #include "transaction/transaction_context.h"
 #include "transaction/transaction_manager.h"
 #include "util/multithread_test_util.h"
 #include "util/storage_test_util.h"
+#include "util/transaction_test_util.h"
 #include "common/scoped_timer.h"
 
 namespace terrier {
@@ -48,6 +50,33 @@ class DataTableBenchmark : public benchmark::Fixture {
     // google benchmark might run benchmark several iterations. We need to clear vectors.
     read_buffers_.clear();
     reads_.clear();
+  }
+
+  void StartGC(transaction::TransactionManager *const txn_manager) {
+    gc_ = new storage::GarbageCollector(txn_manager);
+    run_gc_ = true;
+    gc_thread_ = std::thread([this] { GCThreadLoop(); });
+  }
+
+  void EndGC() {
+    run_gc_ = false;
+    gc_thread_.join();
+    // Make sure all garbage is collected. This take 2 runs for unlink and deallocate
+    gc_->PerformGarbageCollection();
+    gc_->PerformGarbageCollection();
+    delete gc_;
+  }
+
+  std::thread gc_thread_;
+  storage::GarbageCollector *gc_ = nullptr;
+  volatile bool run_gc_ = false;
+  const std::chrono::milliseconds gc_period_{10};
+
+  void GCThreadLoop() {
+    while (run_gc_) {
+      std::this_thread::sleep_for(gc_period_);
+      gc_->PerformGarbageCollection();
+    }
   }
 
   // Tuple layout
@@ -209,10 +238,14 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
   storage::DataTable read_table(&block_store_, layout_, storage::layout_version_t(0));
   // Populate read_table_ by inserting tuples
   // We can use dummy timestamps here since we're not invoking concurrency control
-  transaction::TransactionContext olap_txn(transaction::timestamp_t(0), transaction::timestamp_t(0), &buffer_pool_,
-                                      LOGGING_DISABLED);
-  transaction::TransactionContext txn(transaction::timestamp_t(1), transaction::timestamp_t(1), &buffer_pool_,
-                                      LOGGING_DISABLED);
+  transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
+//  transaction::TransactionContext olap_txn(transaction::timestamp_t(0), transaction::timestamp_t(0), &buffer_pool_,
+//                                      LOGGING_DISABLED);
+//  transaction::TransactionContext txn(transaction::timestamp_t(1), transaction::timestamp_t(1), &buffer_pool_,
+//                                      LOGGING_DISABLED);
+
+  transaction::TransactionContext *insert_txn = txn_manager.BeginTransaction();
+
   std::vector<storage::TupleSlot> read_order;
   std::vector<storage::TupleSlot> hotspot;
   const uint32_t num_inserts = 100000;
@@ -222,13 +255,17 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
 
   uint64_t average_version_length = 0;
   for (uint32_t i = 0; i < num_inserts; ++i) {
-    auto slot = read_table.Insert(&olap_txn, *redo_);
+    auto slot = read_table.Insert(insert_txn, *redo_);
     if (i < num_hotspot) {
       hotspot.emplace_back(slot);
     }
     read_order.emplace_back(slot);
   }
+  txn_manager.Commit(insert_txn, TestCallbacks::EmptyCallback, nullptr);
 
+  transaction::TransactionContext *olap_txn = txn_manager.BeginTransaction();
+
+  StartGC(&txn_manager);
   for (auto _ : state) {
     for (uint32_t i = 0; i < num_iterations; ++i) {
       uint64_t elapsed_ms;
@@ -236,7 +273,7 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
         common::ScopedTimer timer(&elapsed_ms);
         // Scan the entire table
         for (uint32_t j = 0; j < num_inserts; ++j) {
-          read_table.Select(&olap_txn, read_order[j], read_, &version_chain_length_traversed);
+          read_table.Select(olap_txn, read_order[j], read_, &version_chain_length_traversed);
           if ( j < num_hotspot) {
             average_version_length += version_chain_length_traversed;
           }
@@ -247,12 +284,15 @@ BENCHMARK_DEFINE_F(DataTableBenchmark, LongUpdatesandRead)(benchmark::State &sta
       state.SetIterationTime(static_cast<double>(elapsed_ms) / 1000.0);
       // Update the hotspot
       for (uint32_t j = 0; j < num_updates_per_iteration; ++j) {
+        transaction::TransactionContext *txn = txn_manager.BeginTransaction();
         for (uint32_t k = 0; k < num_hotspot; ++k) {
-          read_table.Update(&txn, hotspot[k], *redo_);
+          read_table.Update(txn, hotspot[k], *redo_);
         }
+        txn_manager.Commit(txn, TestCallbacks::EmptyCallback, nullptr);
       }
     }
   }
+  EndGC();
   state.SetItemsProcessed(state.iterations() * num_reads_);
 }
 
