@@ -725,22 +725,22 @@ TEST_F(GarbageCollectorTests, SingleOLAP) {
   }
 }
 
+/*
+ * This tests the case where there exists multiple OLAP transactions
+ * and thus multiple compactions are required.
+ *
+ * This is the version chain:
+ * U5
+ * U4
+ * U3
+ * T1 <- active txn
+ * U2
+ * U1
+ * INSERT
+ * T0 <- active txn
+ */
 // NOLINTNEXTLINE
 TEST_F(GarbageCollectorTests, InterleavedOLAP) {
-  /*
-   * This tests the case where there exists multiple OLAP transactions
-   * and thus multiple compactions are required.
-   *
-   * This is the version chain:
-   * U5
-   * U4
-   * U3
-   * T1 <- active txn
-   * U2
-   * U1
-   * INSERT
-   * T0 <- active txn
-   */
   for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
     transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
     GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
@@ -824,25 +824,27 @@ TEST_F(GarbageCollectorTests, InterleavedOLAP) {
     EXPECT_EQ(std::make_pair(4u, 3u), gc.PerformGarbageCollection());
     // Deallocate U5 and INSERT
     EXPECT_EQ(std::make_pair(2u, 0u), gc.PerformGarbageCollection());
+    // Nothing should get unlinked or deallocated
+    EXPECT_EQ(std::make_pair(0u,0u), gc.PerformGarbageCollection());
   }
 }
 
+/*
+ * This tests multiple tuple version chains.
+ *
+ * This is the version chain:
+ * Tuple 1:            Tuple 2:
+ *                     U2'
+ *                     U1'
+ *                     INSERT'
+ *        T1 <- active txn
+ * U2
+ * U1 (by T1)
+ * INSERT (by T)
+ *        T0 <- active txn
+ */
 // NOLINTNEXTLINE
 TEST_F(GarbageCollectorTests, TwoTupleOLAP) {
-    /*
-   * This tests multiple tuple version chains.
-   *
-   * This is the version chain:
-   * Tuple 1:            Tuple 2:
-   *                     U2'
-   *                     U1'
-   *                     INSERT'
-   *        T1 <- active txn
-   * U2
-   * U1 (by T1)
-   * INSERT (by T)
-   *        T0 <- active txn
-   */
   for (uint32_t iteration = 0; iteration < num_iterations_; ++iteration) {
     transaction::TransactionManager txn_manager(&buffer_pool_, true, LOGGING_DISABLED);
     GarbageCollectorDataTableTestObject tested(&block_store_, max_columns_, &generator_);
@@ -939,6 +941,8 @@ TEST_F(GarbageCollectorTests, TwoTupleOLAP) {
     EXPECT_EQ(std::make_pair(2u, 5u), gc.PerformGarbageCollection());
     // Deallocate INSERT, U2, INSERT', U2'
     EXPECT_EQ(std::make_pair(4u, 0u), gc.PerformGarbageCollection());
+    // Nothing should get unlinked or deallocated
+    EXPECT_EQ(std::make_pair(0u,0u), gc.PerformGarbageCollection());
   }
 }
 
