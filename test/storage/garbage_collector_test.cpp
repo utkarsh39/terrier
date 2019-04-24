@@ -839,8 +839,8 @@ TEST_F(GarbageCollectorTests, InterleavedOLAP) {
  *                     INSERT'
  *        T1 <- active txn
  * U2
- * U1 (by T1)
- * INSERT (by T)
+ * U1
+ * INSERT
  *        T0 <- active txn
  */
 // NOLINTNEXTLINE
