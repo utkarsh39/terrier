@@ -825,7 +825,7 @@ TEST_F(GarbageCollectorTests, InterleavedOLAP) {
     // Deallocate U5 and INSERT
     EXPECT_EQ(std::make_pair(2u, 0u), gc.PerformGarbageCollection());
     // Nothing should get unlinked or deallocated
-    EXPECT_EQ(std::make_pair(0u,0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
   }
 }
 
@@ -942,7 +942,7 @@ TEST_F(GarbageCollectorTests, TwoTupleOLAP) {
     // Deallocate INSERT, U2, INSERT', U2'
     EXPECT_EQ(std::make_pair(4u, 0u), gc.PerformGarbageCollection());
     // Nothing should get unlinked or deallocated
-    EXPECT_EQ(std::make_pair(0u,0u), gc.PerformGarbageCollection());
+    EXPECT_EQ(std::make_pair(0u, 0u), gc.PerformGarbageCollection());
   }
 }
 
