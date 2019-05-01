@@ -13,12 +13,12 @@ void LogManager::Process() {
       flush_queue_.pop();
     }
 
-    thread_pool_.SubmitTask([=]() {
+    thread_pool_.SubmitTask([=](int i) {
+      TERRIER_ASSERT(i < contexts_.size(), "Something wrong with log thread pool and contexts_ vector sizes");
+      LogThreadContext *context = contexts_[i];
       IterableBufferSegment<LogRecord> task_buffer(buffer);
-      LogThreadContext *context = GetContext();
       ProcessTaskBuffer(&task_buffer, context);
       buffer_pool_->Release(buffer);
-      PushContextToQueue(context);
     });
   }
   thread_pool_.WaitUntilAllFinished();
@@ -43,16 +43,14 @@ void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> *const task_
 }
 
 void LogManager::FlushAll() {
-  common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-  for (auto *context : logging_contexts_queue_) {
+  for (auto *context : contexts_) {
     common::SpinLatch::ScopedSpinLatch file_guard(&file_latch_);
     context->Flush();
   }
 }
 
 void LogManager::CloseAll() {
-  common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-  for (auto *context : logging_contexts_queue_) {
+  for (auto *context : contexts_) {
     common::SpinLatch::ScopedSpinLatch file_guard(&file_latch_);
     context->out_.Close();
   }
@@ -232,18 +230,6 @@ uint32_t LogManager::GetRecordSize(const terrier::storage::LogRecord &record) co
   }
 
   return size;
-}
-
-LogThreadContext *LogManager::GetContext() {
-  common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-  LogThreadContext *context = logging_contexts_queue_.front();
-  logging_contexts_queue_.pop_front();
-  return context;
-}
-
-void LogManager::PushContextToQueue(LogThreadContext *context) {
-  common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-  logging_contexts_queue_.push_front(context);
 }
 
 }  // namespace terrier::storage

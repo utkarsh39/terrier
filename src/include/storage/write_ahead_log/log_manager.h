@@ -13,6 +13,7 @@
 #include "storage/write_ahead_log/log_record.h"
 #include "storage/write_ahead_log/log_thread_context.h"
 #include "transaction/transaction_defs.h"
+#include "storage/write_ahead_log/worker_logger_pool.h"
 
 namespace terrier::storage {
 /**
@@ -30,17 +31,15 @@ class LogManager {
    *                    buffers from
    */
   LogManager(const char *log_file_path, RecordBufferSegmentPool *const buffer_pool, int num_threads)
-      : buffer_pool_(buffer_pool), num_threads_(num_threads), thread_pool_(num_threads_, {}) {
-    common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
+      : buffer_pool_(buffer_pool), num_threads_(num_threads), thread_pool_(num_threads, {}) {
     for (int i = 0; i < num_threads_; i++) {
       auto *context = new LogThreadContext(log_file_path);
-      logging_contexts_queue_.push_front(context);
+      contexts_.push_back(context);
     }
   }
 
   ~LogManager() {
-    common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-    for (auto *context : logging_contexts_queue_) {
+    for (auto *context : contexts_) {
       delete context;
     }
   }
@@ -94,17 +93,10 @@ class LogManager {
 
   // The number of threads
   int num_threads_;
-  common::WorkerPool thread_pool_;
-  // Logging Contexts for each of the threads
-  std::forward_list<LogThreadContext *> logging_contexts_queue_;
-  // Latch on the contexts queue
-  common::SpinLatch contexts_latch_;
+  WorkerLoggerPool thread_pool_;
+  std::vector<LogThreadContext *> contexts_;
   // Latch on the file so that only one thread can write to a file at a time
   common::SpinLatch file_latch_;
-
-  LogThreadContext *GetContext();
-
-  void PushContextToQueue(LogThreadContext *context);
 
   /**
    * Calculate the size of the log for a record
