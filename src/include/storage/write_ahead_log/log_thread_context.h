@@ -29,11 +29,27 @@ class LogThreadContext {
   void AddCallback(transaction::callback_fn callback, void *args) { commits_in_buffer_.emplace_back(callback, args); }
 
   template <class T>
-  void WriteValue(const T &val) {
-    out_.BufferWrite(&val, sizeof(T));
+  void WriteValue(const T &val, common::SpinLatch *const latch) {
+    WriteValue(&val, sizeof(T), latch);
   }
 
-  void WriteValue(const void *val, uint32_t size) { out_.BufferWrite(val, size); }
+  void WriteValue(const void *val, uint32_t size, common::SpinLatch *const latch) {
+    if (!out_.CanBuffer(size) && !is_locked_) {
+      common::SpinLatch::ScopedSpinLatch guard(&is_locked_latch_);
+      latch->Lock();
+      is_locked_ = true;
+    }
+    out_.BufferWrite(val, size);
+  }
+
+  void Unlock(common::SpinLatch *const latch) {
+    common::SpinLatch::ScopedSpinLatch guard(&is_locked_latch_);
+    if (is_locked_) {
+      Flush();
+      latch->Unlock();
+      is_locked_ = false;
+    }
+  }
 
  private:
   friend class LogManager;
@@ -42,6 +58,9 @@ class LogThreadContext {
   BufferedLogWriter out_;
   // These do not need to be thread safe since the only thread adding or removing from it is the flushing thread
   std::vector<std::pair<transaction::callback_fn, void *>> commits_in_buffer_;
+
+  bool is_locked_ = false;
+  common::SpinLatch is_locked_latch_;
 };
 
 }  // namespace terrier::storage

@@ -16,7 +16,7 @@ void LogManager::Process() {
     thread_pool_.SubmitTask([=]() {
       IterableBufferSegment<LogRecord> task_buffer(buffer);
       LogThreadContext *context = GetContext();
-      ProcessTaskBuffer(&task_buffer, context);
+      SerializeTaskBuffer(&task_buffer, context);
       buffer_pool_->Release(buffer);
       PushContextToQueue(context);
     });
@@ -76,6 +76,7 @@ void LogManager::SerializeTaskBuffer(IterableBufferSegment<LogRecord> *const tas
       SerializeRecord(record, context);
     }
   }
+  context->Unlock(&file_latch_);
 }
 
 uint32_t LogManager::GetTaskBufferSize(IterableBufferSegment<LogRecord> *const task_buffer) {
@@ -101,29 +102,29 @@ void LogManager::SerializeRecord(const terrier::storage::LogRecord &record, LogT
   // manager generates in this function. In particular, the later value is very likely to be strictly smaller when the
   // LogRecordType is REDO. On recovery, the goal is to turn the serialized format back into an in-memory log record of
   // this size.
-  context->WriteValue(record.Size());
+  context->WriteValue(record.Size(), &file_latch_);
 
-  context->WriteValue(record.RecordType());
-  context->WriteValue(record.TxnBegin());
+  context->WriteValue(record.RecordType(), &file_latch_);
+  context->WriteValue(record.TxnBegin(), &file_latch_);
 
   switch (record.RecordType()) {
     case LogRecordType::REDO: {
       auto *record_body = record.GetUnderlyingRecordBodyAs<RedoRecord>();
       auto *data_table = record_body->GetDataTable();
-      context->WriteValue(data_table->TableOid());
+      context->WriteValue(data_table->TableOid(), &file_latch_);
 
       // TODO(Justin): Be careful about how tuple slot is interpreted during real recovery. Right now I think we kind of
       //  sidestep the issue with "bookkeeping".
-      context->WriteValue(record_body->GetTupleSlot());
+      context->WriteValue(record_body->GetTupleSlot(), &file_latch_);
 
       auto *delta = record_body->Delta();
       // Write out which column ids this redo record is concerned with. On recovery, we can construct the appropriate
       // ProjectedRowInitializer from these ids and their corresponding block layout.
-      context->WriteValue(delta->NumColumns());
-      context->WriteValue(delta->ColumnIds(), static_cast<uint32_t>(sizeof(col_id_t)) * delta->NumColumns());
+      context->WriteValue(delta->NumColumns(), &file_latch_);
+      context->WriteValue(delta->ColumnIds(), static_cast<uint32_t>(sizeof(col_id_t)) * delta->NumColumns(), &file_latch_);
 
       // Write out the null bitmap.
-      context->WriteValue(&(delta->Bitmap()), common::RawBitmap::SizeInBytes(delta->NumColumns()));
+      context->WriteValue(&(delta->Bitmap()), common::RawBitmap::SizeInBytes(delta->NumColumns()), &file_latch_);
 
       // We need the block layout to determine the size of each attribute.
       const auto &block_layout = data_table->GetBlockLayout();
@@ -141,19 +142,19 @@ void LogManager::SerializeRecord(const terrier::storage::LogRecord &record, LogT
           // Inline column value is a pointer to a VarlenEntry, so reinterpret as such.
           const auto *varlen_entry = reinterpret_cast<const VarlenEntry *>(*column_value_address);
           // Serialize out length of the varlen entry.
-          context->WriteValue(varlen_entry->Size());
+          context->WriteValue(varlen_entry->Size(), &file_latch_);
           if (varlen_entry->IsInlined()) {
             // Serialize out the prefix of the varlen entry.
-            context->WriteValue(varlen_entry->Prefix(), varlen_entry->Size());
+            context->WriteValue(varlen_entry->Prefix(), varlen_entry->Size(), &file_latch_);
           } else {
             // Serialize out the content field of the varlen entry.
-            context->WriteValue(varlen_entry->Content(), varlen_entry->Size());
+            context->WriteValue(varlen_entry->Content(), varlen_entry->Size(), &file_latch_);
           }
         } else {
           // Inline column value is the actual data we want to serialize out.
           // Note that by writing out AttrSize(col_id) bytes instead of just the difference between successive offsets
           // of the delta record, we avoid serializing out any potential padding.
-          context->WriteValue(column_value_address, block_layout.AttrSize(col_id));
+          context->WriteValue(column_value_address, block_layout.AttrSize(col_id), &file_latch_);
         }
       }
       break;
@@ -161,12 +162,12 @@ void LogManager::SerializeRecord(const terrier::storage::LogRecord &record, LogT
     case LogRecordType::DELETE: {
       auto *record_body = record.GetUnderlyingRecordBodyAs<DeleteRecord>();
       auto *data_table = record_body->GetDataTable();
-      context->WriteValue(data_table->TableOid());
-      context->WriteValue(record_body->GetTupleSlot());
+      context->WriteValue(data_table->TableOid(), &file_latch_);
+      context->WriteValue(record_body->GetTupleSlot(), &file_latch_);
       break;
     }
     case LogRecordType::COMMIT:
-      context->WriteValue(record.GetUnderlyingRecordBodyAs<CommitRecord>()->CommitTime());
+      context->WriteValue(record.GetUnderlyingRecordBodyAs<CommitRecord>()->CommitTime(), &file_latch_);
   }
 }
 
