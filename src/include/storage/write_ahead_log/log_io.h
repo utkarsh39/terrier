@@ -120,12 +120,14 @@ class BufferedLogWriter {
     if (fsync(out_) == -1) throw std::runtime_error("fsync failed with errno " + std::to_string(errno));
   }
 
+  bool CanBuffer(uint32_t size) { return BUFFER_SIZE - buffer_size_ >= size; }
+  uint32_t constexpr GetBufferCapacity() { return BUFFER_SIZE; }
+
  private:
   int out_;  // fd of the output files
   char buffer_[BUFFER_SIZE];
-  uint32_t buffer_size_ = 0;
 
-  bool CanBuffer(uint32_t size) { return BUFFER_SIZE - buffer_size_ >= size; }
+  uint32_t buffer_size_ = 0;
 
   void WriteUnsynced(const void *data, uint32_t size) { PosixIoWrappers::WriteFully(out_, data, size); }
 

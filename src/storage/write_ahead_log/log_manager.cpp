@@ -13,7 +13,7 @@ void LogManager::Process() {
       flush_queue_.pop();
     }
     IterableBufferSegment<LogRecord> task_buffer(buffer);
-    SerializeTaskBuffer(task_buffer);
+    ProcessTaskBuffer(task_buffer);
     buffer_pool_->Release(buffer);
   }
   Flush();
@@ -58,6 +58,23 @@ uint32_t LogManager::GetTaskBufferSize(IterableBufferSegment<LogRecord> &task_bu
     }
   }
   return size;
+}
+
+void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer) {
+  uint32_t size = GetTaskBufferSize(task_buffer);
+  if (out_.CanBuffer(size)) {
+    SerializeTaskBuffer(task_buffer);
+  } else if (size <= out_.GetBufferCapacity()) {
+    {
+      common::SpinLatch::ScopedSpinLatch guard(&file_latch_);
+      Flush();
+    }
+    SerializeTaskBuffer(task_buffer);
+  } else {
+    common::SpinLatch::ScopedSpinLatch guard(&file_latch_);
+    SerializeTaskBuffer(task_buffer);
+    Flush();
+  }
 }
 
 void LogManager::SerializeRecord(const terrier::storage::LogRecord &record) {

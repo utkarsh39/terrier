@@ -11,6 +11,8 @@
 #include "storage/write_ahead_log/log_io.h"
 #include "storage/write_ahead_log/log_record.h"
 #include "transaction/transaction_defs.h"
+#include "common/worker_pool.h"
+#include "storage/write_ahead_log/log_thread_context.h"
 
 namespace terrier::storage {
 /**
@@ -28,7 +30,7 @@ class LogManager {
    *                    buffers from
    */
   LogManager(const char *log_file_path, RecordBufferSegmentPool *const buffer_pool)
-      : out_(log_file_path), buffer_pool_(buffer_pool) {}
+      : out_(log_file_path), buffer_pool_(buffer_pool), num_threads_(1), thread_pool_(num_threads_, {}) {}
 
   /**
    * Must be called when no other threads are doing work
@@ -72,6 +74,15 @@ class LogManager {
   //  (e.g. logs can be streamed out to the network for remote replication)
   BufferedLogWriter out_;
   RecordBufferSegmentPool *buffer_pool_;
+  // The number of threads
+  int num_threads_;
+  common::WorkerPool thread_pool_;
+  // Logging Contexts for each of the threads
+  std::forward_list<LogThreadContext *> logging_contexts_queue_;
+  // Latch on the contexts queue
+  common::SpinLatch contexts_latch_;
+  // Latch on the file so that only one thread can write to a file at a time
+  common::SpinLatch file_latch_;
 
   // TODO(Tianyu): Might not be necessary, since commit on txn manager is already protected with a latch
   common::SpinLatch flush_queue_latch_;
@@ -95,6 +106,8 @@ class LogManager {
    * @return the size of the buffer
    */
   uint32_t GetTaskBufferSize(IterableBufferSegment<LogRecord> &task_buffer);
+
+  void ProcessTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer);
 
   /**
    * Calculate the size of the value
