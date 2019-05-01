@@ -132,8 +132,10 @@ class BufferedLogWriter {
   void WriteUnsynced(const void *data, uint32_t size) { PosixIoWrappers::WriteFully(out_, data, size); }
 
   void FlushBuffer() {
-    WriteUnsynced(buffer_, buffer_size_);
-    buffer_size_ = 0;
+    if (buffer_size_) {
+      WriteUnsynced(buffer_, buffer_size_);
+      buffer_size_ = 0;
+    }
   }
 };
 
