@@ -13,7 +13,7 @@ void LogManager::Process() {
       flush_queue_.pop();
     }
 
-    thread_pool_.SubmitTask([this, &buffer]() {
+    thread_pool_.SubmitTask([=]() {
       IterableBufferSegment<LogRecord> task_buffer(buffer);
       LogThreadContext *context = GetContext();
       ProcessTaskBuffer(task_buffer, context);

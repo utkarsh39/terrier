@@ -35,9 +35,8 @@ class LogThreadContext {
     out_.BufferWrite(&val, sizeof(T));
   }
 
-  template <class T>
-  void WriteValue(const T &val, uint32_t size) {
-    out_.BufferWrite(&val, size);
+  void WriteValue(const void *val, uint32_t size) {
+    out_.BufferWrite(val, size);
   }
 
  private:

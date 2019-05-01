@@ -40,8 +40,7 @@ class LogManager {
 
   ~LogManager() {
     common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
-    for (int i = 0; i < num_threads_; i++) {
-      LogThreadContext *context = logging_contexts_queue_.front();
+    for (auto *context : logging_contexts_queue_) {
       delete context;
     }
   }
