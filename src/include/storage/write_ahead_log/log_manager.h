@@ -1,11 +1,11 @@
 #pragma once
 
+#include <common/worker_pool.h>
 #include <queue>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <common/worker_pool.h>
 #include "common/spin_latch.h"
 #include "common/strong_typedef.h"
 #include "storage/record_buffer.h"
@@ -33,7 +33,7 @@ class LogManager {
       : buffer_pool_(buffer_pool), num_threads_(num_threads), thread_pool_(num_threads_, {}) {
     common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
     for (int i = 0; i < num_threads_; i++) {
-      LogThreadContext *context = new LogThreadContext(log_file_path);
+      auto *context = new LogThreadContext(log_file_path);
       logging_contexts_queue_.push_front(context);
     }
   }
@@ -78,9 +78,7 @@ class LogManager {
    */
   void Process();
 
-  void SetNumberOfThreads(int num_threads) {
-    num_threads_ = num_threads;
-  }
+  void SetNumberOfThreads(int num_threads) { num_threads_ = num_threads; }
 
  private:
   friend class LogThreadContext;
@@ -112,14 +110,14 @@ class LogManager {
    * @param record the record
    * @return the size of the record
    */
-  uint32_t GetRecordSize(const terrier::storage::LogRecord &record);
+  uint32_t GetRecordSize(const terrier::storage::LogRecord &record) const;
 
   /**
    * Calculate the size of the log for a task buffer
    * @param task_buffer the task buffer
    * @return the size of the buffer
    */
-  uint32_t GetTaskBufferSize(IterableBufferSegment<LogRecord> &task_buffer);
+  uint32_t GetTaskBufferSize(IterableBufferSegment<LogRecord> *task_buffer);
 
   /**
    * Calculate the size of the value
@@ -128,11 +126,11 @@ class LogManager {
    * @return the size of the value
    */
   template <class T>
-  uint32_t GetValueSize(const T &val) {
+  uint32_t GetValueSize(const T &val) const {
     return sizeof(T);
   }
 
-  void ProcessTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer, LogThreadContext *context);
+  void ProcessTaskBuffer(IterableBufferSegment<LogRecord> *task_buffer, LogThreadContext *context);
 
   /**
    * Serialize out the record to the log
@@ -144,6 +142,6 @@ class LogManager {
    * Serialize out the task buffer to the log
    * @param task_buffer the task buffer
    */
-  void SerializeTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer, LogThreadContext *context);
+  void SerializeTaskBuffer(IterableBufferSegment<LogRecord> *task_buffer, LogThreadContext *context);
 };
 }  // namespace terrier::storage

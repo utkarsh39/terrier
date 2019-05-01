@@ -16,7 +16,7 @@ void LogManager::Process() {
     thread_pool_.SubmitTask([=]() {
       IterableBufferSegment<LogRecord> task_buffer(buffer);
       LogThreadContext *context = GetContext();
-      ProcessTaskBuffer(task_buffer, context);
+      ProcessTaskBuffer(&task_buffer, context);
       buffer_pool_->Release(buffer);
       PushContextToQueue(context);
     });
@@ -25,7 +25,7 @@ void LogManager::Process() {
   FlushAll();
 }
 
-void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer, LogThreadContext *context) {
+void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> *const task_buffer, LogThreadContext *context) {
   uint32_t size = GetTaskBufferSize(task_buffer);
   // If
   if (context->out_.CanBuffer(size)) {
@@ -59,8 +59,8 @@ void LogManager::CloseAll() {
   }
 }
 
-void LogManager::SerializeTaskBuffer(IterableBufferSegment<LogRecord> &task_buffer, LogThreadContext *context) {
-  for (LogRecord &record : task_buffer) {
+void LogManager::SerializeTaskBuffer(IterableBufferSegment<LogRecord> *const task_buffer, LogThreadContext *context) {
+  for (LogRecord &record : *task_buffer) {
     if (record.RecordType() == LogRecordType::COMMIT) {
       auto *commit_record = record.GetUnderlyingRecordBodyAs<CommitRecord>();
 
@@ -79,9 +79,9 @@ void LogManager::SerializeTaskBuffer(IterableBufferSegment<LogRecord> &task_buff
   }
 }
 
-uint32_t LogManager::GetTaskBufferSize(IterableBufferSegment<LogRecord> &task_buffer) {
+uint32_t LogManager::GetTaskBufferSize(IterableBufferSegment<LogRecord> *const task_buffer) {
   uint32_t size = 0;
-  for (LogRecord &record : task_buffer) {
+  for (LogRecord &record : *task_buffer) {
     if (record.RecordType() == LogRecordType::COMMIT) {
       auto *commit_record = record.GetUnderlyingRecordBodyAs<CommitRecord>();
       // Only commit records that are not read only are serialized
@@ -171,7 +171,7 @@ void LogManager::SerializeRecord(const terrier::storage::LogRecord &record, LogT
   }
 }
 
-uint32_t LogManager::GetRecordSize(const terrier::storage::LogRecord &record) {
+uint32_t LogManager::GetRecordSize(const terrier::storage::LogRecord &record) const {
   uint32_t size = 0;
 
   size += GetValueSize(record.Size());

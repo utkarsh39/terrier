@@ -1,8 +1,8 @@
 #pragma once
 
+#include <common/worker_pool.h>
 #include <queue>
 #include <vector>
-#include <common/worker_pool.h>
 #include "common/spin_latch.h"
 #include "storage/record_buffer.h"
 #include "storage/write_ahead_log/log_io.h"
@@ -12,7 +12,7 @@
 namespace terrier::storage {
 class LogThreadContext {
  public:
-  LogThreadContext(const char *log_file_path) : out_(log_file_path) {}
+  explicit LogThreadContext(const char *log_file_path) : out_(log_file_path) {}
 
   /**
    * Flush the logs to make sure all serialized records before this invocation are persistent. Callbacks from committed
@@ -26,18 +26,14 @@ class LogThreadContext {
     commits_in_buffer_.clear();
   }
 
-  void AddCallback(transaction::callback_fn callback, void *args) {
-    commits_in_buffer_.emplace_back(callback, args);
-  }
+  void AddCallback(transaction::callback_fn callback, void *args) { commits_in_buffer_.emplace_back(callback, args); }
 
   template <class T>
   void WriteValue(const T &val) {
     out_.BufferWrite(&val, sizeof(T));
   }
 
-  void WriteValue(const void *val, uint32_t size) {
-    out_.BufferWrite(val, size);
-  }
+  void WriteValue(const void *val, uint32_t size) { out_.BufferWrite(val, size); }
 
  private:
   friend class LogManager;
