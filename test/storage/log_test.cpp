@@ -106,6 +106,8 @@ class WriteAheadLoggingTests : public TerrierTest {
         storage::VarlenEntry varlen_entry;
         if (varlen_attribute_size <= storage::VarlenEntry::InlineThreshold()) {
           varlen_entry = storage::VarlenEntry::CreateInline(varlen_attribute_content, varlen_attribute_size);
+          // If varlen is inlined, it doesn't need the content, so delete it
+          delete varlen_attribute_content;
         } else {
           varlen_entry = storage::VarlenEntry::Create(varlen_attribute_content, varlen_attribute_size, true);
         }
@@ -128,7 +130,7 @@ class WriteAheadLoggingTests : public TerrierTest {
   std::default_random_engine generator_;
   storage::RecordBufferSegmentPool pool_{2000, 100};
   storage::BlockStore block_store_{100, 100};
-  storage::LogManager log_manager_{LOG_FILE_NAME, &pool_};
+  storage::LogManager log_manager_{LOG_FILE_NAME, &pool_, 1};
 
   // Members related to running gc / logging.
   std::thread log_thread_;
