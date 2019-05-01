@@ -27,7 +27,6 @@ void LogManager::Process() {
 
 void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> *const task_buffer, LogThreadContext *context) {
   uint32_t size = GetTaskBufferSize(task_buffer);
-  // If
   if (context->out_.CanBuffer(size)) {
     SerializeTaskBuffer(task_buffer, context);
   } else if (size <= context->out_.GetBufferCapacity()) {
@@ -46,7 +45,7 @@ void LogManager::ProcessTaskBuffer(IterableBufferSegment<LogRecord> *const task_
 void LogManager::FlushAll() {
   common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
   for (auto *context : logging_contexts_queue_) {
-    common::SpinLatch::ScopedSpinLatch guard(&file_latch_);
+    common::SpinLatch::ScopedSpinLatch file_guard(&file_latch_);
     context->Flush();
   }
 }
@@ -54,7 +53,7 @@ void LogManager::FlushAll() {
 void LogManager::CloseAll() {
   common::SpinLatch::ScopedSpinLatch guard(&contexts_latch_);
   for (auto *context : logging_contexts_queue_) {
-    common::SpinLatch::ScopedSpinLatch guard(&file_latch_);
+    common::SpinLatch::ScopedSpinLatch file_guard(&file_latch_);
     context->out_.Close();
   }
 }

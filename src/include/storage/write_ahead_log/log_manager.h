@@ -52,6 +52,7 @@ class LogManager {
     Process();
     FlushAll();
     CloseAll();
+    thread_pool_.Shutdown();
   }
 
   /**
