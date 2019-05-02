@@ -124,19 +124,20 @@ class BufferedLogWriter {
 
   bool CanBuffer(uint32_t size) { return BUFFER_SIZE - buffer_size_ >= size; }
 
- private:
-  int out_;  // fd of the output files
-  char buffer_[BUFFER_SIZE];
-  uint32_t buffer_size_ = 0;
-
-  void WriteUnsynced(const void *data, uint32_t size) { PosixIoWrappers::WriteFully(out_, data, size); }
-
   void FlushBuffer() {
     if (buffer_size_) {
       WriteUnsynced(buffer_, buffer_size_);
       buffer_size_ = 0;
     }
   }
+
+ private:
+  int out_;  // fd of the output files
+  char buffer_[BUFFER_SIZE];
+
+  uint32_t buffer_size_ = 0;
+
+  void WriteUnsynced(const void *data, uint32_t size) { PosixIoWrappers::WriteFully(out_, data, size); }
 };
 
 /**

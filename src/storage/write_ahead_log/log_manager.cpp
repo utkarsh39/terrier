@@ -48,6 +48,10 @@ void LogManager::FlushAll() {
     common::SpinLatch::ScopedSpinLatch file_guard(&file_latch_);
     context->Flush();
   }
+  if (!logging_contexts_queue_.empty()) {
+    auto *context = logging_contexts_queue_.front();
+    context->Persist();
+  }
 }
 
 void LogManager::CloseAll() {

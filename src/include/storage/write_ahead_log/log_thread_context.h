@@ -21,10 +21,12 @@ class LogThreadContext {
    * Usually this method is called from Process(), but can also be called by itself if need be.
    */
   void Flush() {
-    out_.Persist();
+    out_.FlushBuffer();
     for (auto &callback : commits_in_buffer_) callback.first(callback.second);
     commits_in_buffer_.clear();
   }
+
+  void Persist() { out_.Persist(); }
 
   void AddCallback(transaction::callback_fn callback, void *args) { commits_in_buffer_.emplace_back(callback, args); }
 
