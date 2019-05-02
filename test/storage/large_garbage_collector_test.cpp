@@ -305,9 +305,10 @@ TEST_F(LargeGCTests, TPCCishHighThreadWithGC) {
   }
 }
 
-// This test attempts to simulate a TPC-C-like scenario.
+// This test attempts to simulate a long running read-only OLAP query, with OLTP
+// queries in a TPC-C-like scenario.
 // NOLINTNEXTLINE
-TEST_F(LargeGCTests, TPCCishWithGCAndOLAP) {
+TEST_F(LargeGCTests, OLAPAndTPCCishWithGC) {
   const uint32_t txn_length = 5;
   const std::vector<double> update_select_ratio = {0.4, 0.6};
   const uint32_t num_concurrent_txns = MultiThreadTestUtil::HardwareConcurrency();
@@ -325,6 +326,7 @@ TEST_F(LargeGCTests, TPCCishWithGCAndOLAP) {
         .SetVarlenAllowed(true)
         .build();
     StartGC(tested.GetTxnManager());
+    // OLAP Transaction starts here
     auto *olap_txn = tested.GetTxnManager()->BeginTransaction();
     for (uint32_t batch = 0; batch * batch_size < num_txns; batch++) {
       auto result = tested.SimulateOltp(batch_size, num_concurrent_txns);
@@ -339,9 +341,10 @@ TEST_F(LargeGCTests, TPCCishWithGCAndOLAP) {
   }
 }
 
-// This test duplicates the previous one with a higher number of thread swapouts.
+// This test is similar to OLAPAndTPCCishWithGC with a higher number of thread swapouts, and a
+// higher ratio of updates and longer transactions leading to more aborts.
 // NOLINTNEXTLINE
-TEST_F(LargeGCTests, HighAbortRateHighThreadWithGCAndOLAP) {
+TEST_F(LargeGCTests, OLAPAndHighAbortRateHighThreadWithGC) {
   const uint32_t txn_length = 40;
   const std::vector<double> update_select_ratio = {0.8, 0.2};
   const uint32_t num_concurrent_txns = 2 * MultiThreadTestUtil::HardwareConcurrency();
@@ -359,6 +362,7 @@ TEST_F(LargeGCTests, HighAbortRateHighThreadWithGCAndOLAP) {
         .SetVarlenAllowed(true)
         .build();
     StartGC(tested.GetTxnManager());
+    // OLAP Transaction starts here
     auto *olap_txn = tested.GetTxnManager()->BeginTransaction();
     for (uint32_t batch = 0; batch * batch_size < num_txns; batch++) {
       auto result = tested.SimulateOltp(batch_size, num_concurrent_txns);
