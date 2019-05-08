@@ -25,11 +25,11 @@ void LogManager::Process() {
 }
 
 void LogManager::Flush() {
-  // Set the flag for the log writer thread to persist the buffers to disk
-  do_persist_ = true;
-  // Wait for the log writer thread to persist the logs
   {
     std::unique_lock<std::mutex> lock(persist_lock_);
+    // Set the flag for the log writer thread to persist the buffers to disk
+    do_persist_ = true;
+    // Wait for the log writer thread to persist the logs
     persist_cv_.wait(lock, [&] { return !do_persist_; });
   }
   // Execute the callbacks for the transactions that have been persisted
