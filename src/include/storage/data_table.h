@@ -209,7 +209,7 @@ class DataTable {
 
   /**
    * Returns a read-only view of this DataTable's BlockLayout.
-   * @return this DataTable's BlockLayout.
+   * @return
    */
   const BlockLayout &GetBlockLayout() const { return accessor_.GetBlockLayout(); }
 
