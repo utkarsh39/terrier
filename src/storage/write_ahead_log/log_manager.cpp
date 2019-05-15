@@ -18,7 +18,7 @@ void LogManager::Process() {
     buffer_pool_->Release(buffer);
   }
   // Mark the last buffer that was written to as full
-  if (hand_filled_buffer_ != nullptr) {
+  if (filled_buffer_ != nullptr) {
     HandFilledBufferToWriter();
   }
   Flush();

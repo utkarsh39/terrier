@@ -35,7 +35,7 @@ class LogManager {
   LogManager(const char *log_file_path, RecordBufferSegmentPool *const buffer_pool)
       : buffer_pool_(buffer_pool),
         log_file_path_(log_file_path),
-        hand_filled_buffer_(nullptr),
+        filled_buffer_(nullptr),
         log_consumer_(nullptr),
         run_log_consumer_thread_(false),
         do_persist_(true) {}
@@ -128,7 +128,7 @@ class LogManager {
   // This stores all the buffers the serializer or the log consumer threads use
   std::vector<BufferedLogWriter> buffers_;
   // This is the buffer the serializer thread will write to
-  BufferedLogWriter *hand_filled_buffer_;
+  BufferedLogWriter *filled_buffer_;
   // The queue containing empty buffers which the serializer thread will use
   common::ConcurrentBlockingQueue<BufferedLogWriter *> empty_buffer_queue_;
   // The queue containing filled buffers pending flush to the disk
@@ -165,10 +165,10 @@ class LogManager {
    * @return buffer to write to
    */
   BufferedLogWriter *GetCurrentWriteBuffer() {
-    if (hand_filled_buffer_ == nullptr) {
-      empty_buffer_queue_.Dequeue(&hand_filled_buffer_);
+    if (filled_buffer_ == nullptr) {
+      empty_buffer_queue_.Dequeue(&filled_buffer_);
     }
-    return hand_filled_buffer_;
+    return filled_buffer_;
   }
 
   /**
@@ -192,14 +192,14 @@ class LogManager {
    * Mark the current buffer that the serializer thread is writing to as filled
    */
   void HandFilledBufferToWriter() {
-    filled_buffer_queue_.Enqueue(hand_filled_buffer_);
+    filled_buffer_queue_.Enqueue(filled_buffer_);
     // Signal consumer thread that a buffer is ready to be flushed to the disk
     {
       std::unique_lock<std::mutex> lock(persist_lock_);
       wake_consumer_thread_cv_.notify_one();
     }
     // Mark that serializer thread doesn't have a buffer in its possession to which it can write to
-    hand_filled_buffer_ = nullptr;
+    filled_buffer_ = nullptr;
   }
 };
 }  // namespace terrier::storage
