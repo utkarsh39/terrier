@@ -16,8 +16,8 @@ class UndoRecordOwner {
    * @warning This can be NULL if the undo record is unlinked or is a compacted record
    */
   transaction::TransactionContext *Get() {
-    if (owned_by_ != reinterpret_cast<transaction::TransactionContext *>(uintptr_t(-1))) {
-      return owned_by_;
+    if (owner_txn_ != reinterpret_cast<transaction::TransactionContext *>(uintptr_t(-1))) {
+      return owner_txn_;
     }
     return nullptr;
   }
@@ -26,27 +26,27 @@ class UndoRecordOwner {
    * Assigns the pointer to the transaction which owns this UndoRecord
    * @param txn pointer to the owner transaction to be assigned to the undo record.
    */
-  void Put(transaction::TransactionContext *txn) { owned_by_ = txn; }
+  void Put(transaction::TransactionContext *txn) { owner_txn_ = txn; }
 
   /**
    * Assigns pointer to a special reserved value of -1 used only for records owned by the GC.
    */
-  void SetCompacted() { owned_by_ = reinterpret_cast<transaction::TransactionContext *>(-1); }
+  void SetCompacted() { owner_txn_ = reinterpret_cast<transaction::TransactionContext *>(-1); }
 
   /**
    * Returns true if the Undo Record is owned by the GC, false otherwise
    * @return if the Undo Record is owned by the GC
    */
-  bool IsOwnedByGC() { return owned_by_ == reinterpret_cast<transaction::TransactionContext *>(-1); }
+  bool IsOwnedByGC() { return owner_txn_ == reinterpret_cast<transaction::TransactionContext *>(-1); }
 
   /**
    * Returns true if the pointer to the owner is null, false otherwise
    * @return if the pointer to the owner is null
    */
-  bool IsNull() { return owned_by_ == nullptr; }
+  bool IsNull() { return owner_txn_ == nullptr; }
 
  private:
-  transaction::TransactionContext *owned_by_;
+  transaction::TransactionContext *owner_txn_;
 };
 
 /**
